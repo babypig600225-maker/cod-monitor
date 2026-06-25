@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>污水COD檢測記錄系統</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--surface2:#1c2333;--surface3:#21262d;--border:#30363d;--accent:#39d0b8;--accent-dim:rgba(57,208,184,0.15);--warn:#f0a04b;--danger:#f85149;--danger-dim:rgba(248,81,73,0.12);--ok:#3fb950;--ok-dim:rgba(63,185,80,0.12);--text:#e6edf3;--text2:#8b949e;--text3:#484f58;--radius:10px;--radius-sm:6px}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5;min-height:100vh}
+nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 28px;display:flex;align-items:center;position:sticky;top:0;z-index:100}
+.nav-brand{font-weight:700;font-size:.95rem;color:var(--text);padding:14px 0;margin-right:28px;display:flex;align-items:center;gap:8px}
+.nav-brand em{color:var(--accent);font-style:normal}
+.nav-tab{padding:16px 16px;font-size:.82rem;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.nav-tab:hover{color:var(--text)}.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.page{display:none;padding:26px 28px;max-width:1160px;margin:0 auto}.page.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px 24px;margin-bottom:18px}
+.card-title{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text2);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card-title::before{content:'';width:3px;height:13px;background:var(--accent);border-radius:2px;flex-shrink:0}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:16px}
+.form-group{display:flex;flex-direction:column;gap:5px}
+label{font-size:.72rem;font-weight:600;color:var(--text2);letter-spacing:.04em}
+input,select,textarea{background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:8px 11px;font-size:.84rem;font-family:inherit;transition:border-color .15s;width:100%}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+textarea{min-height:68px;resize:vertical}
+#codValue{font-size:1.1rem;font-weight:700}
+#codValue.over{color:var(--danger);border-color:var(--danger)}
+#codValue.ok{color:var(--ok);border-color:var(--ok)}
+.cod-meter{margin-top:5px;height:4px;background:var(--surface3);border-radius:2px;overflow:hidden}
+.cod-meter-fill{height:100%;border-radius:2px;transition:width .3s,background .3s;background:var(--ok)}
+.photo-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:22px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.photo-zone:hover,.photo-zone.drag{border-color:var(--accent);background:var(--accent-dim)}
+.photo-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.pz-icon{font-size:2rem;margin-bottom:8px}
+.photo-zone p{font-size:.79rem;color:var(--text2)}.photo-zone p strong{color:var(--accent)}
+.photo-previews{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.photo-thumb{position:relative;width:84px;height:84px;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border)}
+.photo-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.del-btn{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.75);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.del-btn:hover{background:var(--danger)}
+.btn-row{display:flex;gap:10px;justify-content:flex-end}
+.btn{padding:9px 22px;border-radius:var(--radius-sm);font-size:.84rem;font-weight:600;cursor:pointer;border:none;transition:opacity .15s,transform .1s;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{opacity:.85}.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#0d1117}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text);border-color:var(--text2)}
+.btn-danger{background:var(--danger-dim);color:var(--danger);border:1px solid rgba(248,81,73,.3)}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:14px;margin-bottom:18px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;position:relative;overflow:hidden}
+.kpi-stripe{position:absolute;top:0;left:0;right:0;height:2px}
+.kpi-label{font-size:.69rem;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px}
+.kpi-num{font-size:1.85rem;font-weight:700;line-height:1}.kpi-sub{font-size:.71rem;color:var(--text2);margin-top:4px}
+.kpi-accent{color:var(--accent)}.kpi-danger{color:var(--danger)}.kpi-warn{color:var(--warn)}.kpi-ok{color:var(--ok)}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+canvas{max-height:210px}
+.filter-bar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.filter-selects{display:flex;gap:10px;flex-wrap:wrap}
+.filter-selects select{width:auto;padding:6px 10px;font-size:.8rem}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.81rem;min-width:680px}
+thead th{background:var(--surface3);color:var(--text2);font-size:.69rem;letter-spacing:.07em;text-transform:uppercase;padding:9px 13px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody tr{border-bottom:1px solid var(--border)}tbody tr:last-child{border-bottom:none}tbody tr:hover{background:var(--surface3)}
+tbody td{padding:9px 13px;vertical-align:middle}
+.badge{display:inline-block;padding:2px 9px;border-radius:12px;font-size:.69rem;font-weight:600}
+.badge-ok{background:var(--ok-dim);color:var(--ok);border:1px solid rgba(63,185,80,.25)}
+.badge-over{background:var(--danger-dim);color:var(--danger);border:1px solid rgba(248,81,73,.25)}
+.cod-cell{font-weight:700;font-variant-numeric:tabular-nums}
+.thumb-sm{width:34px;height:34px;border-radius:4px;object-fit:cover;cursor:pointer;border:1px solid var(--border);transition:transform .1s}
+.thumb-sm:hover{transform:scale(1.12)}.no-photo{color:var(--text3);font-size:.75rem}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:999;display:none;align-items:center;justify-content:center}
+.lightbox.open{display:flex}
+.lightbox img{max-width:90vw;max-height:88vh;border-radius:var(--radius);box-shadow:0 24px 80px rgba(0,0,0,.6)}
+.lightbox-close{position:absolute;top:18px;right:22px;color:#fff;font-size:1.8rem;cursor:pointer;background:none;border:none;line-height:1}
+.drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none}
+.drawer-overlay.open{display:block}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:400px;max-width:95vw;background:var(--surface);border-left:1px solid var(--border);z-index:201;overflow-y:auto;transform:translateX(100%);transition:transform .25s ease;padding:22px}
+.drawer.open{transform:translateX(0)}
+.dr-title{font-size:1rem;font-weight:700;margin-bottom:4px}.dr-meta{font-size:.77rem;color:var(--text2);margin-bottom:18px}
+.dr-photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:7px;margin-bottom:14px}
+.dr-photos img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-sm);cursor:pointer;border:1px solid var(--border)}
+.dl-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:.81rem}
+.dl-row:last-child{border-bottom:none}.dl-label{color:var(--text2)}.dl-value{font-weight:600}
+.dr-note{margin-top:12px;background:var(--surface3);border-radius:var(--radius-sm);padding:11px;font-size:.8rem;color:var(--text2);white-space:pre-wrap}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 17px;font-size:.81rem;color:var(--text);transform:translateY(60px);opacity:0;transition:all .25s;z-index:500;max-width:290px}
+.toast.show{transform:translateY(0);opacity:1}.toast.ok{border-color:rgba(63,185,80,.4);color:var(--ok)}.toast.err{border-color:rgba(248,81,73,.4);color:var(--danger)}
+.empty{text-align:center;padding:52px 20px;color:var(--text2)}.empty .ei{font-size:2.4rem;margin-bottom:10px}.empty p{font-size:.84rem}
+@media(max-width:700px){nav{padding:0 14px}.page{padding:14px}.chart-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nav-brand">🧪 <em>COD</em> 檢測記錄</div>
+  <div class="nav-tab active" onclick="switchTab('input')">新增記錄</div>
+  <div class="nav-tab" onclick="switchTab('dashboard')">儀表板</div>
+  <div class="nav-tab" onclick="switchTab('records')">歷史記錄</div>
+</nav>
+
+<div class="page active" id="tab-input">
+  <div class="card">
+    <div class="card-title">基本資料</div>
+    <div class="form-grid">
+      <div class="form-group"><label>取樣日期</label><input type="date" id="fDate"></div>
+      <div class="form-group"><label>取樣時間</label><input type="time" id="fTime"></div>
+      <div class="form-group"><label>取樣點</label>
+        <select id="fSite">
+          <option value="新廠-污水排放口">新廠－污水排放口</option>
+          <option value="舊廠-污水排放口">舊廠－污水排放口</option>
+          <option value="新舊廠混合排放口">新舊廠混合排放口</option>
+        </select>
+      </div>
+      <div class="form-group"><label>試劑批號</label><input type="text" id="fLot" placeholder="e.g. Lot:26C006A"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">消解與測試</div>
+    <div class="form-grid">
+      <div class="form-group"><label>消解時間區間</label><input type="text" id="fDigest" placeholder="e.g. 11:10～13:10"></div>
+      <div class="form-group"><label>測試時間</label><input type="time" id="fTestTime"></div>
+      <div class="form-group"><label>管制上限 (mg/L)</label><input type="number" id="fLimit" value="480" min="0"></div>
+      <div class="form-group"><label>Blank 種類</label><input type="text" id="fBlank" placeholder="e.g. RO水"></div>
+    </div>
+    <div class="form-group" style="max-width:250px">
+      <label>COD 檢測值 (mg/L)</label>
+      <input type="number" id="codValue" placeholder="輸入數值" min="0" step="0.1" oninput="onCodInput()">
+    </div>
+    <div class="cod-meter" style="max-width:250px"><div class="cod-meter-fill" id="codMeter" style="width:0%"></div></div>
+    <div style="font-size:.71rem;color:var(--text2);margin-top:4px" id="codHint">請輸入 COD 數值</div>
+  </div>
+  <div class="card">
+    <div class="card-title">檢測照片</div>
+    <div class="photo-zone" id="photoZone"
+      ondragover="event.preventDefault();this.classList.add('drag')"
+      ondragleave="this.classList.remove('drag')"
+      ondrop="onDrop(event)">
+      <input type="file" id="photoInput" accept="image/*" multiple onchange="onPhotoSelect(event)">
+      <div class="pz-icon">📷</div>
+      <p>拖曳、<strong>點擊選取</strong> 或 <strong>Ctrl+V 貼上</strong> 截圖</p>
+    </div>
+    <div class="photo-previews" id="photoPreviews"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">備註</div>
+    <div class="form-group"><textarea id="fNote" placeholder="異常現象、操作說明、後續處置…"></textarea></div>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="clearForm()">清除</button>
+    <button class="btn btn-primary" onclick="saveRecord()">💾 儲存記錄</button>
+  </div>
+</div>
+
+<div class="page" id="tab-dashboard">
+  <div class="kpi-row" id="kpiRow"></div>
+  <div class="chart-grid">
+    <div class="card"><div class="card-title">COD 趨勢</div><canvas id="trendChart"></canvas></div>
+    <div class="card"><div class="card-title">各取樣點平均</div><canvas id="barChart"></canvas></div>
+  </div>
+  <div id="dashEmpty" class="empty" style="display:none"><div class="ei">📊</div><p>尚無記錄，請先新增檢測資料</p></div>
+</div>
+
+<div class="page" id="tab-records">
+  <div class="filter-bar">
+    <div class="filter-selects">
+      <select id="filterSite" onchange="renderTable()">
+        <option value="">全部取樣點</option>
+        <option value="新廠-污水排放口">新廠</option>
+        <option value="舊廠-污水排放口">舊廠</option>
+        <option value="新舊廠混合排放口">混合</option>
+      </select>
+      <select id="filterStatus" onchange="renderTable()">
+        <option value="">全部狀態</option>
+        <option value="ok">正常</option>
+        <option value="over">超標</option>
+      </select>
+    </div>
+    <button class="btn btn-danger" onclick="confirmClear()" style="padding:7px 13px;font-size:.77rem">🗑 清除全部</button>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>日期</th><th>時間</th><th>取樣點</th><th>COD (mg/L)</th><th>上限</th><th>狀態</th><th>照片</th><th>操作</th></tr></thead>
+        <tbody id="tblBody"></tbody>
+      </table>
+    </div>
+    <div id="tableEmpty" class="empty" style="display:none"><div class="ei">🗂</div><p>沒有符合條件的記錄</p></div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <button class="lightbox-close" onclick="closeLightbox()">✕</button>
+  <img id="lightboxImg" src="" alt="">
+</div>
+
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+    <div><div class="dr-title" id="drTitle"></div><div class="dr-meta" id="drMeta"></div></div>
+    <button class="btn btn-ghost" style="padding:5px 10px;font-size:.75rem" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="dr-photos" id="drPhotos"></div>
+  <div id="drDetails"></div>
+  <div class="dr-note" id="drNote" style="display:none"></div>
+  <div style="margin-top:16px;display:flex;gap:8px"><button class="btn btn-ghost" id="drEditBtn" style="font-size:.77rem;padding:7px 13px">✏️ 編輯</button><button class="btn btn-danger" id="drDeleteBtn" style="font-size:.77rem;padding:7px 13px">🗑 刪除此筆</button></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const STORE_KEY='cod_records_v2';
+function load(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||[];}catch{return[];}}
+function save(r){
+  try{localStorage.setItem(STORE_KEY,JSON.stringify(r));}
+  catch(e){
+    if(e.name==='QuotaExceededError'||e.code===22){
+      toast('儲存空間不足！請至歷史記錄刪除舊資料後再試','err');
+    } else {
+      toast('儲存失敗：'+e.message,'err');
+    }
+    throw e;
+  }
+}
+
+function switchTab(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  ['input','dashboard','records'].forEach((t,i)=>{
+    if(t===id)document.querySelectorAll('.nav-tab')[i].classList.add('active');
+  });
+  if(id==='dashboard')renderDashboard();
+  if(id==='records')renderTable();
+}
+
+(function(){
+  const n=new Date();
+  document.getElementById('fDate').value=n.toISOString().slice(0,10);
+  document.getElementById('fTime').value=n.toTimeString().slice(0,5);
+})();
+
+let pendingPhotos=[];
+let editingId=null;
+
+function onCodInput(){
+  const v=parseFloat(document.getElementById('codValue').value);
+  const lim=parseFloat(document.getElementById('fLimit').value)||480;
+  const meter=document.getElementById('codMeter');
+  const hint=document.getElementById('codHint');
+  const inp=document.getElementById('codValue');
+  if(isNaN(v)||v<0){meter.style.width='0%';hint.textContent='請輸入 COD 數值';inp.className='';return;}
+  const pct=Math.min((v/(lim*1.3))*100,100);
+  meter.style.width=pct+'%';
+  if(v>lim){meter.style.background='var(--danger)';inp.className='over';hint.innerHTML='<span style="color:var(--danger)">⚠ 超標！超出 '+(v-lim).toFixed(1)+' mg/L</span>';}
+  else if(v/lim>.85){meter.style.background='var(--warn)';inp.className='';hint.innerHTML='<span style="color:var(--warn)">接近上限（'+((v/lim)*100).toFixed(0)+'%）</span>';}
+  else{meter.style.background='var(--ok)';inp.className='ok';hint.innerHTML='<span style="color:var(--ok)">正常（'+((v/lim)*100).toFixed(0)+'% 上限）</span>';}
+}
+
+function onPhotoSelect(e){addFiles(e.target.files);e.target.value='';}
+function onDrop(e){e.preventDefault();document.getElementById('photoZone').classList.remove('drag');addFiles(e.dataTransfer.files);}
+
+// Paste from clipboard (Ctrl+V / Cmd+V)
+document.addEventListener('paste',function(e){
+  const items=e.clipboardData&&e.clipboardData.items;
+  if(!items)return;
+  let found=false;
+  Array.from(items).forEach(item=>{
+    if(item.type.startsWith('image/')){
+      found=true;
+      const blob=item.getAsFile();
+      compressBlob(blob,'clipboard.png');
+    }
+  });
+  if(found)toast('已貼上截圖','ok');
+});
+
+function addFiles(files){
+  Array.from(files).forEach(f=>{
+    if(!f.type.startsWith('image/'))return;
+    compressBlob(f,f.name);
+  });
+}
+
+function compressBlob(blob,name){
+  const r=new FileReader();
+  r.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      const MAX=1000;
+      let w=img.width,h=img.height;
+      if(w>MAX||h>MAX){if(w>h){h=Math.round(h*MAX/w);w=MAX;}else{w=Math.round(w*MAX/h);h=MAX;}}
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      const dataURL=cv.toDataURL('image/jpeg',0.82);
+      pendingPhotos.push({dataURL,name});
+      renderPreviews();
+    };
+    img.src=ev.target.result;
+  };
+  r.readAsDataURL(blob);
+}
+function renderPreviews(){
+  const wrap=document.getElementById('photoPreviews');wrap.innerHTML='';
+  pendingPhotos.forEach((p,i)=>{
+    const d=document.createElement('div');d.className='photo-thumb';
+    d.innerHTML='<img src="'+p.dataURL+'" alt="'+p.name+'"><button class="del-btn" onclick="removePhoto('+i+')">✕</button>';
+    wrap.appendChild(d);
+  });
+}
+function removePhoto(i){pendingPhotos.splice(i,1);renderPreviews();}
+
+function saveRecord(){
+  const date=document.getElementById('fDate').value;
+  const time=document.getElementById('fTime').value;
+  const site=document.getElementById('fSite').value;
+  const cod=parseFloat(document.getElementById('codValue').value);
+  const limit=parseFloat(document.getElementById('fLimit').value)||480;
+  if(!date){toast('請填寫取樣日期','err');return;}
+  if(!site){toast('請選擇取樣點','err');return;}
+  if(isNaN(cod)||cod<0){toast('請輸入有效的 COD 數值','err');return;}
+  const rec={id:Date.now(),date,time,site,cod,limit,
+    digest:document.getElementById('fDigest').value,
+    testTime:document.getElementById('fTestTime').value,
+    lot:document.getElementById('fLot').value,
+    blank:document.getElementById('fBlank').value,
+    note:document.getElementById('fNote').value,
+    photos:pendingPhotos.map(p=>p.dataURL),
+    status:cod>limit?'over':'ok'};
+  let recs=load();
+  if(editingId){
+    const idx=recs.findIndex(r=>r.id===editingId);
+    if(idx>-1){rec.id=editingId;recs[idx]=rec;}
+    else recs.unshift(rec);
+  } else {
+    recs.unshift(rec);
+  }
+  try{save(recs);}catch(e){return;}
+  toast(editingId?'已更新記錄':'已儲存：'+site+'  '+cod+' mg/L','ok');
+  editingId=null;
+  document.querySelector('[onclick="saveRecord()"]').textContent='💾 儲存記錄';
+  clearForm();
+}
+
+function clearForm(){
+  const n=new Date();
+  document.getElementById('fDate').value=n.toISOString().slice(0,10);
+  document.getElementById('fTime').value=n.toTimeString().slice(0,5);
+  document.getElementById('fSite').selectedIndex=0;
+  ['fLot','fDigest','fBlank','fNote'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('fTestTime').value='';
+  document.getElementById('fLimit').value='480';
+  document.getElementById('codValue').value='';
+  document.getElementById('codValue').className='';
+  document.getElementById('codMeter').style.width='0%';
+  document.getElementById('codHint').textContent='請輸入 COD 數值';
+  pendingPhotos=[];renderPreviews();
+  if(editingId){editingId=null;document.querySelector('[onclick="saveRecord()"]').textContent='💾 儲存記錄';}
+}
+
+let tChart=null,bChart=null;
+const SC={'新廠-污水排放口':'#39d0b8','舊廠-污水排放口':'#f0a04b','新舊廠混合排放口':'#a78bfa'};
+function sc(s){return SC[s]||'#8b949e';}
+
+function renderDashboard(){
+  const recs=load();const emp=document.getElementById('dashEmpty');
+  if(recs.length===0){emp.style.display='';document.getElementById('kpiRow').innerHTML='';if(tChart){tChart.destroy();tChart=null;}if(bChart){bChart.destroy();bChart=null;}return;}
+  emp.style.display='none';
+  const over=recs.filter(r=>r.status==='over').length;
+  const avg=recs.reduce((s,r)=>s+r.cod,0)/recs.length;
+  const max=Math.max(...recs.map(r=>r.cod));
+  const sites=[...new Set(recs.map(r=>r.site))];
+  const lim=recs[0]&&recs[0].limit||480;
+  document.getElementById('kpiRow').innerHTML=
+    '<div class="kpi"><div class="kpi-stripe" style="background:var(--accent)"></div><div class="kpi-label">總檢測次數</div><div class="kpi-num kpi-accent">'+recs.length+'</div><div class="kpi-sub">'+sites.length+' 個取樣點</div></div>'+
+    '<div class="kpi"><div class="kpi-stripe" style="background:'+(over>0?'var(--danger)':'var(--ok)')+'"></div><div class="kpi-label">超標次數</div><div class="kpi-num '+(over>0?'kpi-danger':'kpi-ok')+'">'+over+'</div><div class="kpi-sub">'+(over>0?'需要關注':'全部合格')+'</div></div>'+
+    '<div class="kpi"><div class="kpi-stripe" style="background:var(--warn)"></div><div class="kpi-label">平均 COD (mg/L)</div><div class="kpi-num kpi-warn">'+avg.toFixed(1)+'</div><div class="kpi-sub">所有取樣點</div></div>'+
+    '<div class="kpi"><div class="kpi-stripe" style="background:'+(max>lim?'var(--danger)':'var(--accent)')+'"></div><div class="kpi-label">最高 COD (mg/L)</div><div class="kpi-num '+(max>lim?'kpi-danger':'kpi-accent')+'">'+max.toFixed(1)+'</div><div class="kpi-sub">上限 '+lim+' mg/L</div></div>';
+
+  const sorted=[...recs].sort((a,b)=>a.date.localeCompare(b.date));
+  const dates=[...new Set(sorted.map(r=>r.date))];
+  const ds=sites.map(site=>({label:site,data:dates.map(d=>{const r=sorted.find(x=>x.date===d&&x.site===site);return r?r.cod:null;}),borderColor:sc(site),backgroundColor:sc(site)+'22',tension:.3,pointRadius:5,spanGaps:true}));
+  ds.push({label:'上限 ('+lim+')',data:dates.map(()=>lim),borderColor:'#f85149',borderDash:[5,4],borderWidth:1.5,pointRadius:0,fill:false});
+  if(tChart)tChart.destroy();
+  tChart=new Chart(document.getElementById('trendChart').getContext('2d'),{type:'line',data:{labels:dates,datasets:ds},options:cOpts()});
+  const avgs=sites.map(s=>{const v=recs.filter(r=>r.site===s).map(r=>r.cod);return +(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1);});
+  if(bChart)bChart.destroy();
+  bChart=new Chart(document.getElementById('barChart').getContext('2d'),{type:'bar',data:{labels:sites,datasets:[
+    {label:'平均 COD',data:avgs,backgroundColor:sites.map(s=>sc(s)+'bb'),borderColor:sites.map(s=>sc(s)),borderWidth:1.5,borderRadius:6},
+    {type:'line',label:'上限 ('+lim+')',data:sites.map(()=>lim),borderColor:'#f85149',borderDash:[5,4],borderWidth:1.5,pointRadius:0,fill:false}
+  ]},options:cOpts()});
+}
+
+function cOpts(){return{responsive:true,plugins:{legend:{labels:{color:'#8b949e',font:{size:11}}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{color:'#484f58',font:{size:10}},grid:{color:'#21262d'}},y:{ticks:{color:'#484f58',font:{size:10}},grid:{color:'#21262d'},title:{display:true,text:'mg/L',color:'#484f58',font:{size:10}}}}};}
+
+function renderTable(){
+  let recs=load();
+  const site=document.getElementById('filterSite').value;
+  const st=document.getElementById('filterStatus').value;
+  if(site)recs=recs.filter(r=>r.site===site);
+  if(st)recs=recs.filter(r=>r.status===st);
+  const tbody=document.getElementById('tblBody');tbody.innerHTML='';
+  const emp=document.getElementById('tableEmpty');
+  if(recs.length===0){emp.style.display='';return;}emp.style.display='none';
+  recs.forEach(r=>{
+    const over=r.status==='over';
+    const ph=r.photos&&r.photos.length>0?'<img class="thumb-sm" src="'+r.photos[0]+'" onclick="openLightbox(this.src)">':'<span class="no-photo">—</span>';
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td>'+r.date+'</td><td>'+(r.time||'—')+'</td><td>'+r.site+'</td>'+
+      '<td class="cod-cell" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+r.cod.toFixed(1)+'</td>'+
+      '<td style="color:var(--text2)">'+r.limit+'</td>'+
+      '<td><span class="badge '+(over?'badge-over':'badge-ok')+'">'+(over?'超標':'正常')+'</span></td>'+
+      '<td>'+ph+'</td>'+
+      '<td><button class="btn btn-ghost" style="padding:4px 10px;font-size:.74rem" onclick="openDrawer('+r.id+')">詳情</button></td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function openDrawer(id){
+  const r=load().find(x=>x.id===id);if(!r)return;
+  const over=r.status==='over';
+  document.getElementById('drTitle').textContent=r.site;
+  document.getElementById('drMeta').textContent=r.date+'　'+(r.time||'');
+  const ph=document.getElementById('drPhotos');ph.innerHTML='';
+  (r.photos||[]).forEach(src=>{const i=document.createElement('img');i.src=src;i.onclick=()=>openLightbox(src);ph.appendChild(i);});
+  if(!r.photos||r.photos.length===0)ph.innerHTML='<p style="color:var(--text2);font-size:.78rem">無照片</p>';
+  document.getElementById('drDetails').innerHTML=
+    '<div class="dl-row"><span class="dl-label">COD 檢測值</span><span class="dl-value" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+r.cod.toFixed(1)+' mg/L</span></div>'+
+    '<div class="dl-row"><span class="dl-label">管制上限</span><span class="dl-value">'+r.limit+' mg/L</span></div>'+
+    '<div class="dl-row"><span class="dl-label">狀態</span><span class="dl-value" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+(over?'⚠ 超標':'✔ 正常')+'</span></div>'+
+    '<div class="dl-row"><span class="dl-label">消解時間</span><span class="dl-value">'+(r.digest||'—')+'</span></div>'+
+    '<div class="dl-row"><span class="dl-label">測試時間</span><span class="dl-value">'+(r.testTime||'—')+'</span></div>'+
+    '<div class="dl-row"><span class="dl-label">試劑批號</span><span class="dl-value">'+(r.lot||'—')+'</span></div>'+
+    '<div class="dl-row"><span class="dl-label">Blank</span><span class="dl-value">'+(r.blank||'—')+'</span></div>';
+  const ne=document.getElementById('drNote');
+  if(r.note){ne.textContent=r.note;ne.style.display='';}else{ne.style.display='none';}
+  document.getElementById('drDeleteBtn').onclick=()=>deleteRecord(id);
+  document.getElementById('drEditBtn').onclick=()=>startEdit(id);
+  document.getElementById('drawerOverlay').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+}
+function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
+
+function startEdit(id){
+  const r=load().find(x=>x.id===id);if(!r)return;
+  closeDrawer();
+  // Fill form with existing data
+  document.getElementById('fDate').value=r.date;
+  document.getElementById('fTime').value=r.time||'';
+  document.getElementById('fSite').value=r.site;
+  document.getElementById('fLimit').value=r.limit;
+  document.getElementById('fDigest').value=r.digest||'';
+  document.getElementById('fTestTime').value=r.testTime||'';
+  document.getElementById('fLot').value=r.lot||'';
+  document.getElementById('fBlank').value=r.blank||'';
+  document.getElementById('fNote').value=r.note||'';
+  document.getElementById('codValue').value=r.cod;
+  onCodInput();
+  // Load photos
+  pendingPhotos=(r.photos||[]).map((d,i)=>({dataURL:d,name:'photo'+(i+1)+'.jpg'}));
+  renderPreviews();
+  // Mark as editing
+  editingId=id;
+  document.querySelector('[onclick="saveRecord()"]').textContent='💾 更新記錄';
+  switchTab('input');
+  window.scrollTo({top:0,behavior:'smooth'});
+  toast('已載入記錄，修改後按「更新記錄」儲存','ok');
+}
+function deleteRecord(id){if(!confirm('確定要刪除這筆記錄嗎？'))return;save(load().filter(r=>r.id!==id));closeDrawer();renderTable();toast('已刪除記錄','ok');}
+function confirmClear(){if(!confirm('確定要清除所有記錄嗎？此動作無法復原。'))return;save([]);renderTable();toast('已清除全部記錄','ok');}
+function openLightbox(src){document.getElementById('lightboxImg').src=src;document.getElementById('lightbox').classList.add('open');}
+function closeLightbox(){document.getElementById('lightbox').classList.remove('open');}
+function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'')+' show';setTimeout(()=>{el.className='toast '+(type||'');},3000);}
+</script>
+</body>
+</html>

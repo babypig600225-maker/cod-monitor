@@ -9,7 +9,7 @@
 :root{--bg:#0d1117;--surface:#161b22;--surface2:#1c2333;--surface3:#21262d;--border:#30363d;--accent:#39d0b8;--accent-dim:rgba(57,208,184,0.15);--warn:#f0a04b;--danger:#f85149;--danger-dim:rgba(248,81,73,0.12);--ok:#3fb950;--ok-dim:rgba(63,185,80,0.12);--text:#e6edf3;--text2:#8b949e;--text3:#484f58;--radius:10px;--radius-sm:6px}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5;min-height:100vh}
-nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 28px;display:flex;align-items:center;position:sticky;top:0;z-index:100}
+nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 16px;display:flex;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100}
 .nav-brand{font-weight:700;font-size:.95rem;color:var(--text);padding:14px 0;margin-right:28px;display:flex;align-items:center;gap:8px}
 .nav-brand em{color:var(--accent);font-style:normal}
 .nav-tab{padding:16px 16px;font-size:.82rem;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;user-select:none}
@@ -94,6 +94,8 @@ tbody td{padding:9px 13px;vertical-align:middle}
   <div class="nav-tab active" onclick="switchTab('input')">新增記錄</div>
   <div class="nav-tab" onclick="switchTab('dashboard')">儀表板</div>
   <div class="nav-tab" onclick="switchTab('records')">歷史記錄</div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:4px 0" id="authBar"><button class="btn btn-primary" style="padding:6px 14px;font-size:.8rem" onclick="signIn()">🔐 登入 M365</button></div>
+  <button class="btn btn-ghost" style="margin-left:8px;padding:6px 12px;font-size:.75rem" onclick="loadFromSharePoint()" title="從 SharePoint 重新載入">🔄 同步</button>
 </nav>
 
 <div class="page active" id="tab-input">
@@ -204,17 +206,224 @@ tbody td{padding:9px 13px;vertical-align:middle}
 </div>
 <div class="toast" id="toast"></div>
 
+<!-- Microsoft MSAL for authentication -->
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+
 <script>
+// ══════════════════════════════════════════════════════════
+//  設定區塊 — 請填入你的 Microsoft 365 資訊
+// ══════════════════════════════════════════════════════════
+const CONFIG = {
+  tenantId:    'dfa061cc-db68-4e9b-bdf3-e459467ceae3',
+  clientId:    'df35cbf2-3b9e-4d9d-8c53-1d0a4523f2fe',
+  sitePath:    '/',
+  siteHost:    'fortunemed.sharepoint.com',
+  listName:    'COD檢測記錄',
+  libraryName: 'COD照片',
+};
+// ══════════════════════════════════════════════════════════
+
 const STORE_KEY='cod_records_v2';
+const SCOPES=['Sites.ReadWrite.All','Files.ReadWrite.All'];
+
+// MSAL 設定
+const msalConfig={auth:{clientId:CONFIG.clientId,authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}};
+const msalInstance=new msal.PublicClientApplication(msalConfig);
+let currentUser=null;
+let isEditor=false;  // 由 SharePoint 權限決定，嘗試寫入後判斷
+
+// ── 登入狀態 UI ──────────────────────────────────────────
+function renderAuthBar(){
+  const bar=document.getElementById('authBar');
+  if(currentUser){
+    bar.innerHTML='<span style="color:var(--text2);font-size:.78rem">'+currentUser.username+'</span>'
+      +'<button class="btn btn-ghost" style="padding:4px 12px;font-size:.75rem" onclick="signOut()">登出</button>';
+  } else {
+    bar.innerHTML='<button class="btn btn-primary" style="padding:6px 16px;font-size:.8rem" onclick="signIn()">🔐 登入 Microsoft 365</button>';
+  }
+}
+
+async function signIn(){
+  try{
+    const res=await msalInstance.loginPopup({scopes:SCOPES});
+    currentUser=res.account;
+    renderAuthBar();
+    await loadFromSharePoint();
+    toast('已登入：'+currentUser.username,'ok');
+  }catch(e){toast('登入失敗：'+e.message,'err');}
+}
+
+function signOut(){
+  msalInstance.logoutPopup();
+  currentUser=null;
+  renderAuthBar();
+}
+
+async function getToken(){
+  const accounts=msalInstance.getAllAccounts();
+  if(accounts.length===0)throw new Error('尚未登入');
+  const res=await msalInstance.acquireTokenSilent({scopes:SCOPES,account:accounts[0]});
+  currentUser=accounts[0];
+  return res.accessToken;
+}
+
+// ── Graph API helpers ────────────────────────────────────
+async function graphGet(url){
+  const token=await getToken();
+  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{headers:{Authorization:'Bearer '+token}});
+  if(!r.ok)throw new Error('Graph GET failed: '+r.status);
+  return r.json();
+}
+
+async function graphPost(url,body){
+  const token=await getToken();
+  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok){const t=await r.text();throw new Error('Graph POST failed: '+r.status+' '+t);}
+  return r.json();
+}
+
+async function graphPatch(url,body){
+  const token=await getToken();
+  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error('Graph PATCH failed: '+r.status);
+  return r.json();
+}
+
+async function graphDelete(url){
+  const token=await getToken();
+  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{method:'DELETE',headers:{Authorization:'Bearer '+token}});
+  if(!r.ok)throw new Error('Graph DELETE failed: '+r.status);
+}
+
+// Get site ID dynamically
+let _siteId=null;
+async function getSiteId(){
+  if(_siteId)return _siteId;
+  const data=await graphGet('/sites/'+CONFIG.siteHost+':'+CONFIG.sitePath);
+  _siteId=data.id;
+  return _siteId;
+}
+
+// ── Upload photo to SharePoint library ──────────────────
+async function uploadPhoto(dataURL,filename){
+  const token=await getToken();
+  const siteId=await getSiteId();
+  // dataURL → Blob
+  const res=await fetch(dataURL);
+  const blob=await res.blob();
+  const arrBuf=await blob.arrayBuffer();
+  const uploadUrl='/sites/'+siteId+'/drives';
+  // Get library drive
+  const drives=await graphGet('/sites/'+siteId+'/drives');
+  const drive=drives.value.find(d=>d.name===CONFIG.libraryName)||drives.value[0];
+  const driveId=drive.id;
+  // Upload
+  const uploadRes=await fetch('https://graph.microsoft.com/v1.0/drives/'+driveId+'/root:/COD照片/'+filename+':/content',{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'image/jpeg'},body:arrBuf});
+  if(!uploadRes.ok)throw new Error('上傳失敗:'+uploadRes.status);
+  const fileData=await uploadRes.json();
+  // Make shareable
+  try{
+    const shareRes=await graphPost('/drives/'+driveId+'/items/'+fileData.id+'/createLink',{type:'view',scope:'organization'});
+    return shareRes.link&&shareRes.link.webUrl||fileData.webUrl;
+  }catch{return fileData.webUrl;}
+}
+
+// ── Save to SharePoint List ──────────────────────────────
+async function saveToSharePoint(rec){
+  const siteId=await getSiteId();
+  const listUrl='/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items';
+
+  // Upload photos first
+  let photoUrls=[];
+  if(rec.photos&&rec.photos.length>0){
+    toast('上傳照片中…','');
+    for(let i=0;i<rec.photos.length;i++){
+      const p=rec.photos[i];
+      if(p.startsWith('http')){photoUrls.push(p);continue;}
+      const fname='COD_'+rec.id+'_'+(i+1)+'.jpg';
+      try{const url=await uploadPhoto(p,fname);photoUrls.push(url);}
+      catch(e){console.warn('照片上傳失敗',e);photoUrls.push('');}
+    }
+  }
+
+  const fields={
+    Title:         rec.site,
+    SampleDate:    rec.date+'T'+(rec.time||'00:00')+':00',
+    SampleTime:    rec.time||'',
+    CodValue:      rec.cod,
+    LimitValue:    rec.limit,
+    Status:        rec.status,
+    DigestTime:    rec.digest||'',
+    TestTime:      rec.testTime||'',
+    LotNumber:     rec.lot||'',
+    BlankType:     rec.blank||'',
+    Note:          rec.note||'',
+    PhotoUrls:     JSON.stringify(photoUrls),
+    RecordId:      String(rec.id),
+  };
+
+  if(rec._spId){
+    // Update existing
+    await graphPatch('/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items/'+rec._spId+'/fields',fields);
+    return rec._spId;
+  } else {
+    const created=await graphPost(listUrl,{fields});
+    return created.id;
+  }
+}
+
+// ── Load from SharePoint List ────────────────────────────
+async function loadFromSharePoint(){
+  try{
+    const siteId=await getSiteId();
+    const url='/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items?$expand=fields&$top=200&$orderby=fields/SampleDate desc';
+    const data=await graphGet(url);
+    const spRecords=data.value.map(item=>{
+      const f=item.fields;
+      let photos=[];
+      try{photos=JSON.parse(f.PhotoUrls||'[]');}catch{}
+      return{
+        id:       parseInt(f.RecordId)||item.id,
+        _spId:    item.id,
+        date:     (f.SampleDate||'').slice(0,10),
+        time:     f.SampleTime||'',
+        site:     f.Title||'',
+        cod:      parseFloat(f.CodValue)||0,
+        limit:    parseFloat(f.LimitValue)||480,
+        status:   f.Status||'ok',
+        digest:   f.DigestTime||'',
+        testTime: f.TestTime||'',
+        lot:      f.LotNumber||'',
+        blank:    f.BlankType||'',
+        note:     f.Note||'',
+        photos,
+      };
+    });
+    // Merge into localStorage
+    localStorage.setItem(STORE_KEY,JSON.stringify(spRecords));
+    toast('已從 SharePoint 載入 '+spRecords.length+' 筆記錄','ok');
+    // Refresh current view
+    const activeTab=document.querySelector('.page.active');
+    if(activeTab&&activeTab.id==='tab-dashboard')renderDashboard();
+    if(activeTab&&activeTab.id==='tab-records')renderTable();
+  }catch(e){
+    toast('SharePoint 載入失敗：'+e.message,'err');
+  }
+}
+
+// ── Delete from SharePoint ───────────────────────────────
+async function deleteFromSharePoint(spId){
+  const siteId=await getSiteId();
+  await graphDelete('/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items/'+spId);
+}
+
+// ── LOCAL storage helpers ────────────────────────────────
 function load(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||[];}catch{return[];}}
 function save(r){
   try{localStorage.setItem(STORE_KEY,JSON.stringify(r));}
   catch(e){
-    if(e.name==='QuotaExceededError'||e.code===22){
-      toast('儲存空間不足！請至歷史記錄刪除舊資料後再試','err');
-    } else {
-      toast('儲存失敗：'+e.message,'err');
-    }
+    if(e.name==='QuotaExceededError'||e.code===22){toast('儲存空間不足！請至歷史記錄刪除舊資料後再試','err');}
+    else{toast('儲存失敗：'+e.message,'err');}
     throw e;
   }
 }
@@ -234,6 +443,12 @@ function switchTab(id){
   const n=new Date();
   document.getElementById('fDate').value=n.toISOString().slice(0,10);
   document.getElementById('fTime').value=n.toTimeString().slice(0,5);
+  // Try silent login on load
+  msalInstance.handleRedirectPromise().then(()=>{
+    const accounts=msalInstance.getAllAccounts();
+    if(accounts.length>0){currentUser=accounts[0];renderAuthBar();loadFromSharePoint();}
+    else{renderAuthBar();}
+  });
 })();
 
 let pendingPhotos=[];
@@ -256,46 +471,35 @@ function onCodInput(){
 function onPhotoSelect(e){addFiles(e.target.files);e.target.value='';}
 function onDrop(e){e.preventDefault();document.getElementById('photoZone').classList.remove('drag');addFiles(e.dataTransfer.files);}
 
-// Paste from clipboard (Ctrl+V / Cmd+V)
 document.addEventListener('paste',function(e){
   const items=e.clipboardData&&e.clipboardData.items;
   if(!items)return;
   let found=false;
   Array.from(items).forEach(item=>{
-    if(item.type.startsWith('image/')){
-      found=true;
-      const blob=item.getAsFile();
-      compressBlob(blob,'clipboard.png');
-    }
+    if(item.type.startsWith('image/')){found=true;compressBlob(item.getAsFile(),'clipboard.png');}
   });
   if(found)toast('已貼上截圖','ok');
 });
 
-function addFiles(files){
-  Array.from(files).forEach(f=>{
-    if(!f.type.startsWith('image/'))return;
-    compressBlob(f,f.name);
-  });
-}
+function addFiles(files){Array.from(files).forEach(f=>{if(!f.type.startsWith('image/'))return;compressBlob(f,f.name);});}
 
 function compressBlob(blob,name){
   const r=new FileReader();
   r.onload=ev=>{
     const img=new Image();
     img.onload=()=>{
-      const MAX=1000;
-      let w=img.width,h=img.height;
+      const MAX=1000;let w=img.width,h=img.height;
       if(w>MAX||h>MAX){if(w>h){h=Math.round(h*MAX/w);w=MAX;}else{w=Math.round(w*MAX/h);h=MAX;}}
       const cv=document.createElement('canvas');cv.width=w;cv.height=h;
       cv.getContext('2d').drawImage(img,0,0,w,h);
-      const dataURL=cv.toDataURL('image/jpeg',0.82);
-      pendingPhotos.push({dataURL,name});
+      pendingPhotos.push({dataURL:cv.toDataURL('image/jpeg',0.82),name});
       renderPreviews();
     };
     img.src=ev.target.result;
   };
   r.readAsDataURL(blob);
 }
+
 function renderPreviews(){
   const wrap=document.getElementById('photoPreviews');wrap.innerHTML='';
   pendingPhotos.forEach((p,i)=>{
@@ -306,7 +510,8 @@ function renderPreviews(){
 }
 function removePhoto(i){pendingPhotos.splice(i,1);renderPreviews();}
 
-function saveRecord(){
+async function saveRecord(){
+  if(!currentUser){toast('請先登入 Microsoft 365 才能儲存','err');return;}
   const date=document.getElementById('fDate').value;
   const time=document.getElementById('fTime').value;
   const site=document.getElementById('fSite').value;
@@ -315,27 +520,44 @@ function saveRecord(){
   if(!date){toast('請填寫取樣日期','err');return;}
   if(!site){toast('請選擇取樣點','err');return;}
   if(isNaN(cod)||cod<0){toast('請輸入有效的 COD 數值','err');return;}
-  const rec={id:Date.now(),date,time,site,cod,limit,
+
+  const saveBtn=document.querySelector('[onclick="saveRecord()"]');
+  saveBtn.textContent='⏳ 儲存中…';saveBtn.disabled=true;
+
+  const existRec=editingId?load().find(r=>r.id===editingId):null;
+  const rec={
+    id:editingId||Date.now(),
+    _spId:existRec&&existRec._spId||null,
+    date,time,site,cod,limit,
     digest:document.getElementById('fDigest').value,
     testTime:document.getElementById('fTestTime').value,
     lot:document.getElementById('fLot').value,
     blank:document.getElementById('fBlank').value,
     note:document.getElementById('fNote').value,
     photos:pendingPhotos.map(p=>p.dataURL),
-    status:cod>limit?'over':'ok'};
-  let recs=load();
-  if(editingId){
-    const idx=recs.findIndex(r=>r.id===editingId);
-    if(idx>-1){rec.id=editingId;recs[idx]=rec;}
-    else recs.unshift(rec);
-  } else {
-    recs.unshift(rec);
+    status:cod>limit?'over':'ok'
+  };
+
+  try{
+    const spId=await saveToSharePoint(rec);
+    rec._spId=spId;
+    // Update photos array with SP URLs if they changed
+    let recs=load();
+    if(editingId){
+      const idx=recs.findIndex(r=>r.id===editingId);
+      if(idx>-1)recs[idx]=rec;else recs.unshift(rec);
+    }else{recs.unshift(rec);}
+    try{save(recs);}catch(e){return;}
+    toast(editingId?'✅ 已更新記錄並同步 SharePoint':'✅ 已儲存並同步 SharePoint','ok');
+    editingId=null;
+    saveBtn.textContent='💾 儲存記錄';
+    clearForm();
+  }catch(e){
+    toast('SharePoint 儲存失敗：'+e.message,'err');
+  }finally{
+    saveBtn.disabled=false;
+    if(!editingId)saveBtn.textContent='💾 儲存記錄';
   }
-  try{save(recs);}catch(e){return;}
-  toast(editingId?'已更新記錄':'已儲存：'+site+'  '+cod+' mg/L','ok');
-  editingId=null;
-  document.querySelector('[onclick="saveRecord()"]').textContent='💾 儲存記錄';
-  clearForm();
 }
 
 function clearForm(){
@@ -430,7 +652,12 @@ function openDrawer(id){
     '<div class="dl-row"><span class="dl-label">Blank</span><span class="dl-value">'+(r.blank||'—')+'</span></div>';
   const ne=document.getElementById('drNote');
   if(r.note){ne.textContent=r.note;ne.style.display='';}else{ne.style.display='none';}
-  document.getElementById('drDeleteBtn').onclick=()=>deleteRecord(id);
+  // Show edit/delete only for editors (logged-in users)
+  const editBtn=document.getElementById('drEditBtn');
+  const delBtn=document.getElementById('drDeleteBtn');
+  if(currentUser){editBtn.style.display='';delBtn.style.display='';}
+  else{editBtn.style.display='none';delBtn.style.display='none';}
+  document.getElementById('drDeleteBtn').onclick=()=>deleteRecord(id,r._spId);
   document.getElementById('drEditBtn').onclick=()=>startEdit(id);
   document.getElementById('drawerOverlay').classList.add('open');
   document.getElementById('drawer').classList.add('open');
@@ -440,7 +667,6 @@ function closeDrawer(){document.getElementById('drawerOverlay').classList.remove
 function startEdit(id){
   const r=load().find(x=>x.id===id);if(!r)return;
   closeDrawer();
-  // Fill form with existing data
   document.getElementById('fDate').value=r.date;
   document.getElementById('fTime').value=r.time||'';
   document.getElementById('fSite').value=r.site;
@@ -452,21 +678,34 @@ function startEdit(id){
   document.getElementById('fNote').value=r.note||'';
   document.getElementById('codValue').value=r.cod;
   onCodInput();
-  // Load photos
   pendingPhotos=(r.photos||[]).map((d,i)=>({dataURL:d,name:'photo'+(i+1)+'.jpg'}));
   renderPreviews();
-  // Mark as editing
   editingId=id;
   document.querySelector('[onclick="saveRecord()"]').textContent='💾 更新記錄';
   switchTab('input');
   window.scrollTo({top:0,behavior:'smooth'});
   toast('已載入記錄，修改後按「更新記錄」儲存','ok');
 }
-function deleteRecord(id){if(!confirm('確定要刪除這筆記錄嗎？'))return;save(load().filter(r=>r.id!==id));closeDrawer();renderTable();toast('已刪除記錄','ok');}
-function confirmClear(){if(!confirm('確定要清除所有記錄嗎？此動作無法復原。'))return;save([]);renderTable();toast('已清除全部記錄','ok');}
+
+async function deleteRecord(id,spId){
+  if(!confirm('確定要刪除這筆記錄嗎？'))return;
+  if(spId&&currentUser){
+    try{await deleteFromSharePoint(spId);} catch(e){toast('SharePoint 刪除失敗：'+e.message,'err');return;}
+  }
+  save(load().filter(r=>r.id!==id));
+  closeDrawer();renderTable();
+  toast('已刪除記錄','ok');
+}
+
+function confirmClear(){
+  if(!confirm('確定要清除所有本機記錄嗎？SharePoint 上的資料不受影響。'))return;
+  save([]);renderTable();toast('已清除本機記錄','ok');
+}
+
 function openLightbox(src){document.getElementById('lightboxImg').src=src;document.getElementById('lightbox').classList.add('open');}
 function closeLightbox(){document.getElementById('lightbox').classList.remove('open');}
-function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'')+' show';setTimeout(()=>{el.className='toast '+(type||'');},3000);}
+function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'')+' show';setTimeout(()=>{el.className='toast '+(type||'');},3500);}
 </script>
+
 </body>
 </html>

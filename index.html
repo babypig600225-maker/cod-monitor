@@ -222,22 +222,66 @@ function save(r){
 }
 
 // ── Google Sheets 同步 ────────────────────
+// JSONP helper for GET requests (bypasses CORS)
+function jsonpGet(url){
+  return new Promise((resolve,reject)=>{
+    const cbName='cb_'+Date.now();
+    const script=document.createElement('script');
+    const timeout=setTimeout(()=>{
+      cleanup();
+      reject(new Error('Timeout'));
+    },15000);
+    function cleanup(){
+      delete window[cbName];
+      document.head.removeChild(script);
+      clearTimeout(timeout);
+    }
+    window[cbName]=function(data){
+      cleanup();
+      resolve(data);
+    };
+    script.src=url+(url.includes('?')?'&':'?')+'callback='+cbName;
+    script.onerror=()=>{cleanup();reject(new Error('Script load error'));};
+    document.head.appendChild(script);
+  });
+}
+
+// POST via no-cors (fire-and-forget), then sync to verify
+async function postToGAS(payload){
+  try{
+    await fetch(GAS_URL,{
+      method:'POST',
+      mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify(payload)
+    });
+    // Wait a moment then sync to confirm
+    await new Promise(r=>setTimeout(r,1500));
+    await syncFromGAS();
+  }catch(e){
+    throw e;
+  }
+}
+
 async function syncFromGAS(){
   try{
     setSyncStatus('⏳ 同步中…');
-    const res = await fetch(GAS_URL);
-    const data = await res.json();
+    const data = await jsonpGet(GAS_URL);
     if(data.success && data.records){
-      // Convert date objects to strings
       const records = data.records.map(r=>{
         let d = r.date;
-        if(d instanceof Object && d.getTime) d = d.toISOString().slice(0,10);
+        if(d && typeof d === 'object' && d.getTime) d = d.toISOString().slice(0,10);
         if(typeof d === 'number'){
-          // Excel serial date
           const dd = new Date(Math.round((d-25569)*86400*1000));
           d = dd.toISOString().slice(0,10);
         }
-        return {...r, date:String(d||''), time:String(r.time||''), cod:parseFloat(r.cod)||0, limit:parseFloat(r.limit)||480, photos:Array.isArray(r.photos)?r.photos:(r.photos?String(r.photos).split(','):[]) };
+        return {...r,
+          date:String(d||''),
+          time:String(r.time||''),
+          cod:parseFloat(r.cod)||0,
+          limit:parseFloat(r.limit)||480,
+          photos:Array.isArray(r.photos)?r.photos.filter(p=>p):(r.photos?String(r.photos).split(',').filter(p=>p):[])
+        };
       });
       save(records);
       setSyncStatus('✅ 已同步 '+records.length+' 筆');
@@ -263,21 +307,11 @@ async function saveToGAS(rec){
     blank:rec.blank||'', note:rec.note||'',
     photos:(rec.photos||[]).join(',')
   };
-  const res = await fetch(GAS_URL,{
-    method:'POST',
-    body:JSON.stringify(payload)
-  });
-  const data = await res.json();
-  if(!data.success) throw new Error(data.error||'儲存失敗');
+  await postToGAS(payload);
 }
 
 async function deleteFromGAS(id){
-  const res = await fetch(GAS_URL,{
-    method:'POST',
-    body:JSON.stringify({action:'delete',id:String(id)})
-  });
-  const data = await res.json();
-  if(!data.success) throw new Error(data.error||'刪除失敗');
+  await postToGAS({action:'delete',id:String(id)});
 }
 
 function setSyncStatus(msg){

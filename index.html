@@ -207,7 +207,7 @@ tbody td{padding:9px 13px;vertical-align:middle}
 <div class="toast" id="toast"></div>
 
 <!-- Microsoft MSAL for authentication -->
-<script src="https://alcdn.msauth.net/browser/2.39.0/js/msal-browser.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
 <script>window.addEventListener("error",function(e){if(e.filename&&e.filename.includes("msal")){document.getElementById("authBar").innerHTML='<button class="btn btn-primary" style="padding:6px 14px;font-size:.8rem" onclick="signIn()">🔐 登入 M365</button>';}});</script>
 
 <script>
@@ -232,7 +232,15 @@ let msalInstance=null;
 function initMsal(){
   if(msalInstance)return;
   if(typeof msal==='undefined'){toast('MSAL 函式庫載入失敗，請重新整理頁面','err');throw new Error('msal not loaded');}
-  const msalConfig={auth:{clientId:CONFIG.clientId,authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}};
+  const msalConfig={
+    auth:{
+      clientId:CONFIG.clientId,
+      authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,
+      redirectUri:window.location.origin+window.location.pathname,
+      knownAuthorities:['login.microsoftonline.com']
+    },
+    cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}
+  };
   msalInstance=new msal.PublicClientApplication(msalConfig);
 }
 let currentUser=null;

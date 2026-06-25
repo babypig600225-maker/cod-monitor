@@ -552,13 +552,13 @@ function renderTable(){
       '<td style="color:var(--text2)">'+r.limit+'</td>'+
       '<td><span class="badge '+(over?'badge-over':'badge-ok')+'">'+(over?'超標':'正常')+'</span></td>'+
       '<td>'+ph+'</td>'+
-      '<td><button class="btn btn-ghost" style="padding:4px 10px;font-size:.74rem" onclick="openDrawer('+r.id+')">詳情</button></td>';
+      '<td><button class="btn btn-ghost" style="padding:4px 10px;font-size:.74rem" onclick="openDrawer(\''+String(r.id)+'\')"  >詳情</button></td>';
     tbody.appendChild(tr);
   });
 }
 
 function openDrawer(id){
-  const r=load().find(x=>x.id===id);if(!r)return;
+  const r=load().find(x=>String(x.id)===String(id));if(!r)return;
   const over=r.status==='over';
   document.getElementById('drTitle').textContent=r.site;
   document.getElementById('drMeta').textContent=r.date+'　'+(r.time||'');
@@ -583,7 +583,7 @@ function openDrawer(id){
 function closeDrawer(){document.getElementById('drawerOverlay').classList.remove('open');document.getElementById('drawer').classList.remove('open');}
 
 function startEdit(id){
-  const r=load().find(x=>x.id===id);if(!r)return;
+  const r=load().find(x=>String(x.id)===String(id));if(!r)return;
   closeDrawer();
   document.getElementById('fDate').value=r.date;
   document.getElementById('fTime').value=r.time||'';
@@ -609,7 +609,7 @@ async function deleteRecord(id){
   if(!confirm('確定要刪除這筆記錄嗎？'))return;
   try{
     await deleteFromGAS(id);
-    save(load().filter(r=>r.id!==id));
+    save(load().filter(r=>String(r.id)!==String(id)));
     closeDrawer();renderTable();
     toast('已刪除記錄','ok');
   }catch(e){

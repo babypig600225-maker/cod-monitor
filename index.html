@@ -94,8 +94,8 @@ tbody td{padding:9px 13px;vertical-align:middle}
   <div class="nav-tab active" onclick="switchTab('input')">新增記錄</div>
   <div class="nav-tab" onclick="switchTab('dashboard')">儀表板</div>
   <div class="nav-tab" onclick="switchTab('records')">歷史記錄</div>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:4px 0" id="authBar"></div>
-  <button class="btn btn-ghost" style="margin-left:8px;padding:6px 12px;font-size:.75rem" onclick="loadFromSharePoint()" title="從 SharePoint 重新載入">🔄 同步</button>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:4px 0" id="syncStatus"></div>
+  <button class="btn btn-ghost" style="margin-left:4px;padding:6px 12px;font-size:.75rem" onclick="syncFromGAS()">🔄 同步</button>
 </nav>
 
 <div class="page active" id="tab-input">
@@ -206,246 +206,86 @@ tbody td{padding:9px 13px;vertical-align:middle}
 </div>
 <div class="toast" id="toast"></div>
 
-<!-- Microsoft MSAL for authentication -->
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" crossorigin="anonymous"></script>
-<script>window.addEventListener("error",function(e){if(e.filename&&e.filename.includes("msal")){document.getElementById("authBar").innerHTML='<button class="btn btn-primary" style="padding:6px 14px;font-size:.8rem" onclick="signIn()">🔐 登入 M365</button>';}});</script>
-
 <script>
-// ══════════════════════════════════════════════════════════
-//  設定區塊 — 請填入你的 Microsoft 365 資訊
-// ══════════════════════════════════════════════════════════
-const CONFIG = {
-  tenantId:    'dfa061cc-db68-4e9b-bdf3-e459467ceae3',
-  clientId:    'df35cbf2-3b9e-4d9d-8c53-1d0a4523f2fe',
-  sitePath:    '/',
-  siteHost:    'fortunemed.sharepoint.com',
-  listName:    'COD檢測記錄',
-  libraryName: 'COD照片',
-};
-// ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════
+//  Google Apps Script API 端點
+// ══════════════════════════════════════════
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzMGLhC9LaQKTIHST7dXhWcEbPETihZ74AW1vYgC3luOHYNc7_DsmAupcTigVVBCn658Q/exec';
+const STORE_KEY = 'cod_records_v2';
 
-const STORE_KEY='cod_records_v2';
-const SCOPES=['Sites.ReadWrite.All','Files.ReadWrite.All'];
-
-// MSAL 設定
-let msalInstance=null;
-function initMsal(){
-  if(msalInstance)return;
-  if(typeof msal==='undefined'){toast('MSAL 函式庫載入失敗，請重新整理頁面','err');throw new Error('msal not loaded');}
-  const msalConfig={
-    auth:{
-      clientId:CONFIG.clientId,
-      authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,
-      redirectUri:window.location.origin+window.location.pathname,
-      knownAuthorities:['login.microsoftonline.com']
-    },
-    cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}
-  };
-  msalInstance=new msal.PublicClientApplication(msalConfig);
-}
-let currentUser=null;
-let isEditor=false;  // 由 SharePoint 權限決定，嘗試寫入後判斷
-
-// ── 登入狀態 UI ──────────────────────────────────────────
-function renderAuthBar(){
-  const bar=document.getElementById('authBar');
-  if(!bar)return;
-  if(currentUser){
-    bar.innerHTML='<span style="color:var(--text2);font-size:.78rem">'+currentUser.username+'</span>'
-      +'<button class="btn btn-ghost" style="padding:4px 12px;font-size:.75rem" onclick="signOut()">登出</button>';
-  } else {
-    bar.innerHTML='<button class="btn btn-primary" style="padding:6px 14px;font-size:.8rem" onclick="signIn()">🔐 登入 M365</button>';
-  }
-}
-
-async function signIn(){
-  try{
-    if(typeof msal==='undefined'){toast('MSAL 尚未載入，請重新整理頁面後再試','err');return;}
-    initMsal();
-    const res=await msalInstance.loginPopup({scopes:SCOPES});
-    currentUser=res.account;
-    renderAuthBar();
-    await loadFromSharePoint();
-    toast('已登入：'+currentUser.username,'ok');
-  }catch(e){toast('登入失敗：'+e.message,'err');}
-}
-
-function signOut(){
-  msalInstance.logoutPopup();
-  currentUser=null;
-  renderAuthBar();
-}
-
-async function getToken(){
-  initMsal();
-  const accounts=msalInstance.getAllAccounts();
-  if(accounts.length===0)throw new Error('尚未登入');
-  const res=await msalInstance.acquireTokenSilent({scopes:SCOPES,account:accounts[0]});
-  currentUser=accounts[0];
-  return res.accessToken;
-}
-
-// ── Graph API helpers ────────────────────────────────────
-async function graphGet(url){
-  const token=await getToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{headers:{Authorization:'Bearer '+token}});
-  if(!r.ok)throw new Error('Graph GET failed: '+r.status);
-  return r.json();
-}
-
-async function graphPost(url,body){
-  const token=await getToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok){const t=await r.text();throw new Error('Graph POST failed: '+r.status+' '+t);}
-  return r.json();
-}
-
-async function graphPatch(url,body){
-  const token=await getToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
-  if(!r.ok)throw new Error('Graph PATCH failed: '+r.status);
-  return r.json();
-}
-
-async function graphDelete(url){
-  const token=await getToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{method:'DELETE',headers:{Authorization:'Bearer '+token}});
-  if(!r.ok)throw new Error('Graph DELETE failed: '+r.status);
-}
-
-// Get site ID dynamically
-let _siteId=null;
-async function getSiteId(){
-  if(_siteId)return _siteId;
-  const data=await graphGet('/sites/'+CONFIG.siteHost+':'+CONFIG.sitePath);
-  _siteId=data.id;
-  return _siteId;
-}
-
-// ── Upload photo to SharePoint library ──────────────────
-async function uploadPhoto(dataURL,filename){
-  const token=await getToken();
-  const siteId=await getSiteId();
-  // dataURL → Blob
-  const res=await fetch(dataURL);
-  const blob=await res.blob();
-  const arrBuf=await blob.arrayBuffer();
-  const uploadUrl='/sites/'+siteId+'/drives';
-  // Get library drive
-  const drives=await graphGet('/sites/'+siteId+'/drives');
-  const drive=drives.value.find(d=>d.name===CONFIG.libraryName)||drives.value[0];
-  const driveId=drive.id;
-  // Upload
-  const uploadRes=await fetch('https://graph.microsoft.com/v1.0/drives/'+driveId+'/root:/COD照片/'+filename+':/content',{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'image/jpeg'},body:arrBuf});
-  if(!uploadRes.ok)throw new Error('上傳失敗:'+uploadRes.status);
-  const fileData=await uploadRes.json();
-  // Make shareable
-  try{
-    const shareRes=await graphPost('/drives/'+driveId+'/items/'+fileData.id+'/createLink',{type:'view',scope:'organization'});
-    return shareRes.link&&shareRes.link.webUrl||fileData.webUrl;
-  }catch{return fileData.webUrl;}
-}
-
-// ── Save to SharePoint List ──────────────────────────────
-async function saveToSharePoint(rec){
-  const siteId=await getSiteId();
-  const listUrl='/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items';
-
-  // Upload photos first
-  let photoUrls=[];
-  if(rec.photos&&rec.photos.length>0){
-    toast('上傳照片中…','');
-    for(let i=0;i<rec.photos.length;i++){
-      const p=rec.photos[i];
-      if(p.startsWith('http')){photoUrls.push(p);continue;}
-      const fname='COD_'+rec.id+'_'+(i+1)+'.jpg';
-      try{const url=await uploadPhoto(p,fname);photoUrls.push(url);}
-      catch(e){console.warn('照片上傳失敗',e);photoUrls.push('');}
-    }
-  }
-
-  const fields={
-    Title:         rec.site,
-    SampleDate:    rec.date+'T'+(rec.time||'00:00')+':00',
-    SampleTime:    rec.time||'',
-    CodValue:      rec.cod,
-    LimitValue:    rec.limit,
-    Status:        rec.status,
-    DigestTime:    rec.digest||'',
-    TestTime:      rec.testTime||'',
-    LotNumber:     rec.lot||'',
-    BlankType:     rec.blank||'',
-    Note:          rec.note||'',
-    PhotoUrls:     JSON.stringify(photoUrls),
-    RecordId:      String(rec.id),
-  };
-
-  if(rec._spId){
-    // Update existing
-    await graphPatch('/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items/'+rec._spId+'/fields',fields);
-    return rec._spId;
-  } else {
-    const created=await graphPost(listUrl,{fields});
-    return created.id;
-  }
-}
-
-// ── Load from SharePoint List ────────────────────────────
-async function loadFromSharePoint(){
-  try{
-    const siteId=await getSiteId();
-    const url='/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items?$expand=fields&$top=200&$orderby=fields/SampleDate desc';
-    const data=await graphGet(url);
-    const spRecords=data.value.map(item=>{
-      const f=item.fields;
-      let photos=[];
-      try{photos=JSON.parse(f.PhotoUrls||'[]');}catch{}
-      return{
-        id:       parseInt(f.RecordId)||item.id,
-        _spId:    item.id,
-        date:     (f.SampleDate||'').slice(0,10),
-        time:     f.SampleTime||'',
-        site:     f.Title||'',
-        cod:      parseFloat(f.CodValue)||0,
-        limit:    parseFloat(f.LimitValue)||480,
-        status:   f.Status||'ok',
-        digest:   f.DigestTime||'',
-        testTime: f.TestTime||'',
-        lot:      f.LotNumber||'',
-        blank:    f.BlankType||'',
-        note:     f.Note||'',
-        photos,
-      };
-    });
-    // Merge into localStorage
-    localStorage.setItem(STORE_KEY,JSON.stringify(spRecords));
-    toast('已從 SharePoint 載入 '+spRecords.length+' 筆記錄','ok');
-    // Refresh current view
-    const activeTab=document.querySelector('.page.active');
-    if(activeTab&&activeTab.id==='tab-dashboard')renderDashboard();
-    if(activeTab&&activeTab.id==='tab-records')renderTable();
-  }catch(e){
-    toast('SharePoint 載入失敗：'+e.message,'err');
-  }
-}
-
-// ── Delete from SharePoint ───────────────────────────────
-async function deleteFromSharePoint(spId){
-  const siteId=await getSiteId();
-  await graphDelete('/sites/'+siteId+'/lists/'+encodeURIComponent(CONFIG.listName)+'/items/'+spId);
-}
-
-// ── LOCAL storage helpers ────────────────────────────────
+// ── 本機 storage ──────────────────────────
 function load(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||[];}catch{return[];}}
 function save(r){
   try{localStorage.setItem(STORE_KEY,JSON.stringify(r));}
-  catch(e){
-    if(e.name==='QuotaExceededError'||e.code===22){toast('儲存空間不足！請至歷史記錄刪除舊資料後再試','err');}
-    else{toast('儲存失敗：'+e.message,'err');}
-    throw e;
+  catch(e){toast('本機儲存失敗','err');throw e;}
+}
+
+// ── Google Sheets 同步 ────────────────────
+async function syncFromGAS(){
+  try{
+    setSyncStatus('⏳ 同步中…');
+    const res = await fetch(GAS_URL);
+    const data = await res.json();
+    if(data.success && data.records){
+      // Convert date objects to strings
+      const records = data.records.map(r=>{
+        let d = r.date;
+        if(d instanceof Object && d.getTime) d = d.toISOString().slice(0,10);
+        if(typeof d === 'number'){
+          // Excel serial date
+          const dd = new Date(Math.round((d-25569)*86400*1000));
+          d = dd.toISOString().slice(0,10);
+        }
+        return {...r, date:String(d||''), time:String(r.time||''), cod:parseFloat(r.cod)||0, limit:parseFloat(r.limit)||480, photos:Array.isArray(r.photos)?r.photos:(r.photos?String(r.photos).split(','):[]) };
+      });
+      save(records);
+      setSyncStatus('✅ 已同步 '+records.length+' 筆');
+      setTimeout(()=>setSyncStatus(''),3000);
+      const activeTab=document.querySelector('.page.active');
+      if(activeTab&&activeTab.id==='tab-dashboard')renderDashboard();
+      if(activeTab&&activeTab.id==='tab-records')renderTable();
+    }
+  }catch(e){
+    setSyncStatus('❌ 同步失敗');
+    toast('同步失敗：'+e.message,'err');
+    setTimeout(()=>setSyncStatus(''),3000);
   }
 }
 
+async function saveToGAS(rec){
+  const payload = {
+    action:'save',
+    id:String(rec.id), date:rec.date, time:rec.time,
+    site:rec.site, cod:rec.cod, limit:rec.limit,
+    status:rec.status, digest:rec.digest||'',
+    testTime:rec.testTime||'', lot:rec.lot||'',
+    blank:rec.blank||'', note:rec.note||'',
+    photos:(rec.photos||[]).join(',')
+  };
+  const res = await fetch(GAS_URL,{
+    method:'POST',
+    body:JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if(!data.success) throw new Error(data.error||'儲存失敗');
+}
+
+async function deleteFromGAS(id){
+  const res = await fetch(GAS_URL,{
+    method:'POST',
+    body:JSON.stringify({action:'delete',id:String(id)})
+  });
+  const data = await res.json();
+  if(!data.success) throw new Error(data.error||'刪除失敗');
+}
+
+function setSyncStatus(msg){
+  const el=document.getElementById('syncStatus');
+  if(el) el.innerHTML='<span style="font-size:.78rem;color:var(--text2)">'+msg+'</span>';
+}
+
+// ── UI ────────────────────────────────────
 function switchTab(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
@@ -461,16 +301,8 @@ function switchTab(id){
   const n=new Date();
   document.getElementById('fDate').value=n.toISOString().slice(0,10);
   document.getElementById('fTime').value=n.toTimeString().slice(0,5);
-  // Try silent login on load
-  renderAuthBar(); // Show login button immediately
-  try{
-    initMsal();
-    msalInstance.handleRedirectPromise().then(()=>{
-      const accounts=msalInstance.getAllAccounts();
-      if(accounts.length>0){currentUser=accounts[0];renderAuthBar();loadFromSharePoint();}
-      else{renderAuthBar();}
-    });
-  }catch(e){console.warn('MSAL init error:',e);renderAuthBar();}
+  // Auto sync on load
+  syncFromGAS();
 })();
 
 let pendingPhotos=[];
@@ -533,7 +365,6 @@ function renderPreviews(){
 function removePhoto(i){pendingPhotos.splice(i,1);renderPreviews();}
 
 async function saveRecord(){
-  if(!currentUser){toast('請先登入 Microsoft 365 才能儲存','err');return;}
   const date=document.getElementById('fDate').value;
   const time=document.getElementById('fTime').value;
   const site=document.getElementById('fSite').value;
@@ -546,10 +377,8 @@ async function saveRecord(){
   const saveBtn=document.querySelector('[onclick="saveRecord()"]');
   saveBtn.textContent='⏳ 儲存中…';saveBtn.disabled=true;
 
-  const existRec=editingId?load().find(r=>r.id===editingId):null;
   const rec={
     id:editingId||Date.now(),
-    _spId:existRec&&existRec._spId||null,
     date,time,site,cod,limit,
     digest:document.getElementById('fDigest').value,
     testTime:document.getElementById('fTestTime').value,
@@ -561,21 +390,24 @@ async function saveRecord(){
   };
 
   try{
-    const spId=await saveToSharePoint(rec);
-    rec._spId=spId;
-    // Update photos array with SP URLs if they changed
+    // Save to local first
     let recs=load();
     if(editingId){
       const idx=recs.findIndex(r=>r.id===editingId);
       if(idx>-1)recs[idx]=rec;else recs.unshift(rec);
     }else{recs.unshift(rec);}
-    try{save(recs);}catch(e){return;}
-    toast(editingId?'✅ 已更新記錄並同步 SharePoint':'✅ 已儲存並同步 SharePoint','ok');
+    save(recs);
+
+    // Sync to Google Sheets (without photos - too large)
+    const recForGAS={...rec, photos:[]};
+    await saveToGAS(recForGAS);
+
+    toast(editingId?'✅ 已更新記錄':'✅ 已儲存記錄','ok');
     editingId=null;
     saveBtn.textContent='💾 儲存記錄';
     clearForm();
   }catch(e){
-    toast('SharePoint 儲存失敗：'+e.message,'err');
+    toast('儲存失敗：'+e.message,'err');
   }finally{
     saveBtn.disabled=false;
     if(!editingId)saveBtn.textContent='💾 儲存記錄';
@@ -617,9 +449,11 @@ function renderDashboard(){
     '<div class="kpi"><div class="kpi-stripe" style="background:var(--warn)"></div><div class="kpi-label">平均 COD (mg/L)</div><div class="kpi-num kpi-warn">'+avg.toFixed(1)+'</div><div class="kpi-sub">所有取樣點</div></div>'+
     '<div class="kpi"><div class="kpi-stripe" style="background:'+(max>lim?'var(--danger)':'var(--accent)')+'"></div><div class="kpi-label">最高 COD (mg/L)</div><div class="kpi-num '+(max>lim?'kpi-danger':'kpi-accent')+'">'+max.toFixed(1)+'</div><div class="kpi-sub">上限 '+lim+' mg/L</div></div>';
 
-  const sorted=[...recs].sort((a,b)=>a.date.localeCompare(b.date));
-  const dates=[...new Set(sorted.map(r=>r.date))];
-  const ds=sites.map(site=>({label:site,data:dates.map(d=>{const r=sorted.find(x=>x.date===d&&x.site===site);return r?r.cod:null;}),borderColor:sc(site),backgroundColor:sc(site)+'22',tension:.3,pointRadius:5,spanGaps:true}));
+  const sorted=[...recs].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const dates=[...new Set(sorted.map(r=>String(r.date)))];
+  const ds=sites.map(site=>{
+    return {label:site,data:dates.map(d=>{const r=sorted.find(x=>String(x.date)===d&&x.site===site);return r?r.cod:null;}),borderColor:sc(site),backgroundColor:sc(site)+'22',tension:.3,pointRadius:5,spanGaps:true};
+  });
   ds.push({label:'上限 ('+lim+')',data:dates.map(()=>lim),borderColor:'#f85149',borderDash:[5,4],borderWidth:1.5,pointRadius:0,fill:false});
   if(tChart)tChart.destroy();
   tChart=new Chart(document.getElementById('trendChart').getContext('2d'),{type:'line',data:{labels:dates,datasets:ds},options:cOpts()});
@@ -631,7 +465,7 @@ function renderDashboard(){
   ]},options:cOpts()});
 }
 
-function cOpts(){return{responsive:true,plugins:{legend:{labels:{color:'#8b949e',font:{size:11}}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{color:'#484f58',font:{size:10}},grid:{color:'#21262d'}},y:{ticks:{color:'#484f58',font:{size:10}},grid:{color:'#21262d'},title:{display:true,text:'mg/L',color:'#484f58',font:{size:10}}}}};}
+function cOpts(){return{responsive:true,plugins:{legend:{labels:{color:'#8b949e',font:{size:11}}},tooltip:{mode:'index',intersect:false}},scales:{x:{ticks:{color:'#484f58',font:{size:10}},grid:{color:'#21262d'}},y:{ticks:{color:'#484f58',font:{size:10}},grid:{color:'#21262d'},title:{display:true,text:'mg/L',color:'#484f58',font:{size:10}}}}}; }
 
 function renderTable(){
   let recs=load();
@@ -647,7 +481,7 @@ function renderTable(){
     const ph=r.photos&&r.photos.length>0?'<img class="thumb-sm" src="'+r.photos[0]+'" onclick="openLightbox(this.src)">':'<span class="no-photo">—</span>';
     const tr=document.createElement('tr');
     tr.innerHTML='<td>'+r.date+'</td><td>'+(r.time||'—')+'</td><td>'+r.site+'</td>'+
-      '<td class="cod-cell" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+r.cod.toFixed(1)+'</td>'+
+      '<td class="cod-cell" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+parseFloat(r.cod).toFixed(1)+'</td>'+
       '<td style="color:var(--text2)">'+r.limit+'</td>'+
       '<td><span class="badge '+(over?'badge-over':'badge-ok')+'">'+(over?'超標':'正常')+'</span></td>'+
       '<td>'+ph+'</td>'+
@@ -665,7 +499,7 @@ function openDrawer(id){
   (r.photos||[]).forEach(src=>{const i=document.createElement('img');i.src=src;i.onclick=()=>openLightbox(src);ph.appendChild(i);});
   if(!r.photos||r.photos.length===0)ph.innerHTML='<p style="color:var(--text2);font-size:.78rem">無照片</p>';
   document.getElementById('drDetails').innerHTML=
-    '<div class="dl-row"><span class="dl-label">COD 檢測值</span><span class="dl-value" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+r.cod.toFixed(1)+' mg/L</span></div>'+
+    '<div class="dl-row"><span class="dl-label">COD 檢測值</span><span class="dl-value" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+parseFloat(r.cod).toFixed(1)+' mg/L</span></div>'+
     '<div class="dl-row"><span class="dl-label">管制上限</span><span class="dl-value">'+r.limit+' mg/L</span></div>'+
     '<div class="dl-row"><span class="dl-label">狀態</span><span class="dl-value" style="color:'+(over?'var(--danger)':'var(--ok)')+'">'+(over?'⚠ 超標':'✔ 正常')+'</span></div>'+
     '<div class="dl-row"><span class="dl-label">消解時間</span><span class="dl-value">'+(r.digest||'—')+'</span></div>'+
@@ -674,12 +508,7 @@ function openDrawer(id){
     '<div class="dl-row"><span class="dl-label">Blank</span><span class="dl-value">'+(r.blank||'—')+'</span></div>';
   const ne=document.getElementById('drNote');
   if(r.note){ne.textContent=r.note;ne.style.display='';}else{ne.style.display='none';}
-  // Show edit/delete only for editors (logged-in users)
-  const editBtn=document.getElementById('drEditBtn');
-  const delBtn=document.getElementById('drDeleteBtn');
-  if(currentUser){editBtn.style.display='';delBtn.style.display='';}
-  else{editBtn.style.display='none';delBtn.style.display='none';}
-  document.getElementById('drDeleteBtn').onclick=()=>deleteRecord(id,r._spId);
+  document.getElementById('drDeleteBtn').onclick=()=>deleteRecord(id);
   document.getElementById('drEditBtn').onclick=()=>startEdit(id);
   document.getElementById('drawerOverlay').classList.add('open');
   document.getElementById('drawer').classList.add('open');
@@ -700,7 +529,7 @@ function startEdit(id){
   document.getElementById('fNote').value=r.note||'';
   document.getElementById('codValue').value=r.cod;
   onCodInput();
-  pendingPhotos=(r.photos||[]).map((d,i)=>({dataURL:d,name:'photo'+(i+1)+'.jpg'}));
+  pendingPhotos=(r.photos||[]).map((d,i)=>{return{dataURL:d,name:'photo'+(i+1)+'.jpg'}});
   renderPreviews();
   editingId=id;
   document.querySelector('[onclick="saveRecord()"]').textContent='💾 更新記錄';
@@ -709,18 +538,20 @@ function startEdit(id){
   toast('已載入記錄，修改後按「更新記錄」儲存','ok');
 }
 
-async function deleteRecord(id,spId){
+async function deleteRecord(id){
   if(!confirm('確定要刪除這筆記錄嗎？'))return;
-  if(spId&&currentUser){
-    try{await deleteFromSharePoint(spId);} catch(e){toast('SharePoint 刪除失敗：'+e.message,'err');return;}
+  try{
+    await deleteFromGAS(id);
+    save(load().filter(r=>r.id!==id));
+    closeDrawer();renderTable();
+    toast('已刪除記錄','ok');
+  }catch(e){
+    toast('刪除失敗：'+e.message,'err');
   }
-  save(load().filter(r=>r.id!==id));
-  closeDrawer();renderTable();
-  toast('已刪除記錄','ok');
 }
 
 function confirmClear(){
-  if(!confirm('確定要清除所有本機記錄嗎？SharePoint 上的資料不受影響。'))return;
+  if(!confirm('確定要清除所有本機記錄嗎？'))return;
   save([]);renderTable();toast('已清除本機記錄','ok');
 }
 

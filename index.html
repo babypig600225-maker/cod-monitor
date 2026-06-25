@@ -552,7 +552,7 @@ function renderTable(){
       '<td style="color:var(--text2)">'+r.limit+'</td>'+
       '<td><span class="badge '+(over?'badge-over':'badge-ok')+'">'+(over?'超標':'正常')+'</span></td>'+
       '<td>'+ph+'</td>'+
-      '<td><button class="btn btn-ghost" style="padding:4px 10px;font-size:.74rem" onclick="openDrawer(\''+String(r.id)+'\')"  >詳情</button></td>';
+      '<td><button class="btn btn-ghost" style="padding:4px 10px;font-size:.74rem" onclick="openDrawer(&quot;'+String(r.id)+'&quot;)">詳情</button></td>';
     tbody.appendChild(tr);
   });
 }

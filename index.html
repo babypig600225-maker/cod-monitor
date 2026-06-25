@@ -238,13 +238,13 @@ let isEditor=false;  // 由 SharePoint 權限決定，嘗試寫入後判斷
 
 // ── 登入狀態 UI ──────────────────────────────────────────
 function renderAuthBar(){
-  initMsal();
   const bar=document.getElementById('authBar');
+  if(!bar)return;
   if(currentUser){
     bar.innerHTML='<span style="color:var(--text2);font-size:.78rem">'+currentUser.username+'</span>'
       +'<button class="btn btn-ghost" style="padding:4px 12px;font-size:.75rem" onclick="signOut()">登出</button>';
   } else {
-    bar.innerHTML='<button class="btn btn-primary" style="padding:6px 16px;font-size:.8rem" onclick="signIn()">🔐 登入 Microsoft 365</button>';
+    bar.innerHTML='<button class="btn btn-primary" style="padding:6px 14px;font-size:.8rem" onclick="signIn()">🔐 登入 M365</button>';
   }
 }
 
@@ -451,12 +451,15 @@ function switchTab(id){
   document.getElementById('fDate').value=n.toISOString().slice(0,10);
   document.getElementById('fTime').value=n.toTimeString().slice(0,5);
   // Try silent login on load
-  initMsal();
-  msalInstance.handleRedirectPromise().then(()=>{
-    const accounts=msalInstance.getAllAccounts();
-    if(accounts.length>0){currentUser=accounts[0];renderAuthBar();loadFromSharePoint();}
-    else{renderAuthBar();}
-  });
+  renderAuthBar(); // Show login button immediately
+  try{
+    initMsal();
+    msalInstance.handleRedirectPromise().then(()=>{
+      const accounts=msalInstance.getAllAccounts();
+      if(accounts.length>0){currentUser=accounts[0];renderAuthBar();loadFromSharePoint();}
+      else{renderAuthBar();}
+    });
+  }catch(e){console.warn('MSAL init error:',e);renderAuthBar();}
 })();
 
 let pendingPhotos=[];
@@ -714,3 +717,6 @@ function openLightbox(src){document.getElementById('lightboxImg').src=src;docume
 function closeLightbox(){document.getElementById('lightbox').classList.remove('open');}
 function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'')+' show';setTimeout(()=>{el.className='toast '+(type||'');},3500);}
 </script>
+
+</body>
+</html>

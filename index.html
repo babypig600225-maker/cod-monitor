@@ -85,6 +85,8 @@ tbody td{padding:9px 13px;vertical-align:middle}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 17px;font-size:.81rem;color:var(--text);transform:translateY(60px);opacity:0;transition:all .25s;z-index:500;max-width:290px}
 .toast.show{transform:translateY(0);opacity:1}.toast.ok{border-color:rgba(63,185,80,.4);color:var(--ok)}.toast.err{border-color:rgba(248,81,73,.4);color:var(--danger)}
 .empty{text-align:center;padding:52px 20px;color:var(--text2)}.empty .ei{font-size:2.4rem;margin-bottom:10px}.empty p{font-size:.84rem}
+.auth-only{display:none}
+.authorized .auth-only{display:inline-flex}
 @media(max-width:700px){nav{padding:0 14px}.page{padding:14px}.chart-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -246,23 +248,6 @@ function jsonpGet(url){
   });
 }
 
-// POST via no-cors (fire-and-forget), then sync to verify
-async function postToGAS(payload){
-  try{
-    await fetch(GAS_URL,{
-      method:'POST',
-      mode:'no-cors',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify(payload)
-    });
-    // Wait a moment then sync to confirm
-    await new Promise(r=>setTimeout(r,1500));
-    await syncFromGAS();
-  }catch(e){
-    throw e;
-  }
-}
-
 async function syncFromGAS(){
   try{
     setSyncStatus('⏳ 同步中…');
@@ -298,20 +283,47 @@ async function syncFromGAS(){
 }
 
 async function saveToGAS(rec){
-  const payload = {
+  const params = new URLSearchParams({
     action:'save',
     id:String(rec.id), date:rec.date, time:rec.time,
     site:rec.site, cod:rec.cod, limit:rec.limit,
     status:rec.status, digest:rec.digest||'',
     testTime:rec.testTime||'', lot:rec.lot||'',
     blank:rec.blank||'', note:rec.note||'',
-    photos:(rec.photos||[]).join(',')
-  };
-  await postToGAS(payload);
+    photos:(rec.photos||[]).filter(p=>p&&!p.startsWith('data:')).join(',')
+  });
+  return jsonpGet(GAS_URL+'?'+params.toString());
 }
 
 async function deleteFromGAS(id){
-  await postToGAS({action:'delete',id:String(id)});
+  return jsonpGet(GAS_URL+'?action=delete&id='+String(id));
+}
+
+function toggleAuth(){
+  if(isAuthorized){
+    isAuthorized=false;
+    sessionStorage.removeItem('cod_auth');
+    updateAuthUI();
+    toast('已退出編輯模式','ok');
+    // Switch to dashboard if on input tab
+    if(document.getElementById('tab-input').classList.contains('active')){
+      switchTab('dashboard');
+    }
+  } else {
+    if(checkAuth()) updateAuthUI();
+  }
+}
+
+function updateAuthUI(){
+  const btn=document.getElementById('authBtn');
+  if(btn) btn.textContent=isAuthorized?'🔓 退出編輯':'🔒 編輯';
+  // Show/hide auth-only elements
+  document.querySelectorAll('.auth-only').forEach(el=>{
+    el.style.display=isAuthorized?'':'none';
+  });
+  // Show/hide input tab
+  const inputTab=document.getElementById('inputTab');
+  if(inputTab) inputTab.style.display=isAuthorized?'':'none';
 }
 
 function setSyncStatus(msg){
@@ -341,6 +353,25 @@ function switchTab(id){
 
 let pendingPhotos=[];
 let editingId=null;
+let isAuthorized=false;
+const EDIT_PASSWORD='02050225';
+
+function checkAuth(){
+  if(isAuthorized)return true;
+  const pw=prompt('請輸入編輯密碼：');
+  if(pw===EDIT_PASSWORD){
+    isAuthorized=true;
+    sessionStorage.setItem('cod_auth','1');
+    return true;
+  }
+  toast('密碼錯誤','err');
+  return false;
+}
+
+// Check if already authenticated in this session
+(function(){
+  if(sessionStorage.getItem('cod_auth')==='1') isAuthorized=true;
+})();
 
 function onCodInput(){
   const v=parseFloat(document.getElementById('codValue').value);
@@ -432,9 +463,11 @@ async function saveRecord(){
     }else{recs.unshift(rec);}
     save(recs);
 
-    // Sync to Google Sheets (without photos - too large)
-    const recForGAS={...rec, photos:[]};
-    await saveToGAS(recForGAS);
+    // Sync to Google Sheets (photos stored locally only)
+    toast('⏳ 同步到 Google Sheets…','');
+    await saveToGAS(rec);
+    // Re-sync to get server data
+    await syncFromGAS();
 
     toast(editingId?'✅ 已更新記錄':'✅ 已儲存記錄','ok');
     editingId=null;

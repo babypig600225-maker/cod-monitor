@@ -94,7 +94,7 @@ tbody td{padding:9px 13px;vertical-align:middle}
   <div class="nav-tab active" onclick="switchTab('input')">新增記錄</div>
   <div class="nav-tab" onclick="switchTab('dashboard')">儀表板</div>
   <div class="nav-tab" onclick="switchTab('records')">歷史記錄</div>
-  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:4px 0" id="authBar"><button class="btn btn-primary" style="padding:6px 14px;font-size:.8rem" onclick="signIn()">🔐 登入 M365</button></div>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:4px 0" id="authBar"></div>
   <button class="btn btn-ghost" style="margin-left:8px;padding:6px 12px;font-size:.75rem" onclick="loadFromSharePoint()" title="從 SharePoint 重新載入">🔄 同步</button>
 </nav>
 
@@ -227,13 +227,18 @@ const STORE_KEY='cod_records_v2';
 const SCOPES=['Sites.ReadWrite.All','Files.ReadWrite.All'];
 
 // MSAL 設定
-const msalConfig={auth:{clientId:CONFIG.clientId,authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}};
-const msalInstance=new msal.PublicClientApplication(msalConfig);
+let msalInstance=null;
+function initMsal(){
+  if(msalInstance)return;
+  const msalConfig={auth:{clientId:CONFIG.clientId,authority:'https://login.microsoftonline.com/'+CONFIG.tenantId,redirectUri:window.location.origin+window.location.pathname},cache:{cacheLocation:'localStorage',storeAuthStateInCookie:false}};
+  msalInstance=new msal.PublicClientApplication(msalConfig);
+}
 let currentUser=null;
 let isEditor=false;  // 由 SharePoint 權限決定，嘗試寫入後判斷
 
 // ── 登入狀態 UI ──────────────────────────────────────────
 function renderAuthBar(){
+  initMsal();
   const bar=document.getElementById('authBar');
   if(currentUser){
     bar.innerHTML='<span style="color:var(--text2);font-size:.78rem">'+currentUser.username+'</span>'
@@ -245,6 +250,7 @@ function renderAuthBar(){
 
 async function signIn(){
   try{
+    initMsal();
     const res=await msalInstance.loginPopup({scopes:SCOPES});
     currentUser=res.account;
     renderAuthBar();
@@ -260,6 +266,7 @@ function signOut(){
 }
 
 async function getToken(){
+  initMsal();
   const accounts=msalInstance.getAllAccounts();
   if(accounts.length===0)throw new Error('尚未登入');
   const res=await msalInstance.acquireTokenSilent({scopes:SCOPES,account:accounts[0]});
@@ -444,6 +451,7 @@ function switchTab(id){
   document.getElementById('fDate').value=n.toISOString().slice(0,10);
   document.getElementById('fTime').value=n.toTimeString().slice(0,5);
   // Try silent login on load
+  initMsal();
   msalInstance.handleRedirectPromise().then(()=>{
     const accounts=msalInstance.getAllAccounts();
     if(accounts.length>0){currentUser=accounts[0];renderAuthBar();loadFromSharePoint();}
@@ -706,6 +714,3 @@ function openLightbox(src){document.getElementById('lightboxImg').src=src;docume
 function closeLightbox(){document.getElementById('lightbox').classList.remove('open');}
 function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className='toast '+(type||'')+' show';setTimeout(()=>{el.className='toast '+(type||'');},3500);}
 </script>
-
-</body>
-</html>

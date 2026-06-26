@@ -268,6 +268,12 @@ async function syncFromGAS(){
           photos:Array.isArray(r.photos)?r.photos.filter(p=>p):(r.photos?String(r.photos).split(',').filter(p=>p):[])
         };
       });
+      // Preserve local photos
+      const localRecs = load();
+      records.forEach(r=>{
+        const local = localRecs.find(l=>String(l.id)===String(r.id));
+        if(local && local.photos && local.photos.length>0) r.photos = local.photos;
+      });
       save(records);
       setSyncStatus('✅ 已同步 '+records.length+' 筆');
       setTimeout(()=>setSyncStatus(''),3000);
